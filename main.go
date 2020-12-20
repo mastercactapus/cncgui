@@ -24,8 +24,8 @@ type paddedTheme struct {
 func (p paddedTheme) Padding() int { return 8 }
 
 func main() {
-	spjsURL := flag.String("spjs", "ws://localhost:8989/ws", "SPJS URL")
-	full := flag.Bool("fullscreen", true, "Toggle fullscreen.")
+	spjsURL := flag.String("spjs", "ws://localhost:8989/ws", "Set the SPJS connection URL.")
+	full := flag.Bool("fullscreen", false, "Run in fullscreen.")
 	flag.Parse()
 	log.SetFlags(log.Lshortfile)
 
