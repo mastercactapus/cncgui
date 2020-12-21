@@ -1,6 +1,6 @@
 # CNC GUI
 
-A CNC GUI built with the fyne toolkit.
+A CNC GUI built with the [Fyne](https://fyne.io/) toolkit.
 
 It connects to [Serial Port JSON Server](https://github.com/chilipeppr/serial-port-json-server) and has support for an [MPG pendant](https://github.com/mastercactapus/arduino-pendant) running on an Arduino.
 
