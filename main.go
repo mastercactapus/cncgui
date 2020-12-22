@@ -95,8 +95,9 @@ func main() {
 	)
 
 	NewPos := func() *widget.Label {
-		l := widget.NewLabel("0.0000")
+		l := widget.NewLabel("     0.0000")
 		l.Alignment = fyne.TextAlignTrailing
+		l.TextStyle.Monospace = true
 		return l
 	}
 
@@ -107,7 +108,7 @@ func main() {
 	mPosY := NewPos()
 	mPosZ := NewPos()
 	refreshFns = append(refreshFns, func() {
-		set := func(l *widget.Label, v float64) { l.SetText(fmt.Sprintf("%0.4f", v)) }
+		set := func(l *widget.Label, v float64) { l.SetText(fmt.Sprintf("%11.4f", v)) }
 		wpos := st.WorkPosition()
 		mpos := st.MachinePosition()
 		set(wPosX, wpos.X)
