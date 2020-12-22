@@ -54,7 +54,11 @@ func (g *GRBL) CommandJog(axis rune, mm float64, wait bool) error {
 
 // SetWPos will set the work coordinate to the proveded value.
 func (g *GRBL) SetWPos(axis rune, mm float64) error {
-	return g.port.SendCommand(fmt.Sprintf("G10L20P1%c%0.4g\n", axis, mm), true)
+	err := g.port.SendCommand(fmt.Sprintf("G10L20P1%c%0.4g\n", axis, mm), true)
+	if err != nil {
+		return err
+	}
+	return g.port.SendCommand("?", false)
 }
 
 // LastStatus will return the last available status. It will block until the first status message is processed.
