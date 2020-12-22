@@ -37,7 +37,6 @@ func main() {
 	cli.RegisterDriver(spjs.NewVIDPIDMatcher("1a86", "7523"), pendant)
 
 	a := app.New()
-	// a.Settings().SetTheme(paddedTheme{a.Settings().Theme()})
 
 	i := 0
 	i++
@@ -55,6 +54,8 @@ func main() {
 	}()
 
 	w := a.NewWindow("CNC GUI")
+	w.Resize(fyne.NewSize(800, 480))
+	w.SetFixedSize(true)
 	if *full {
 		w.SetFullScreen(true)
 	}
@@ -90,12 +91,12 @@ func main() {
 	pause := widget.NewButtonWithIcon("", theme.MediaPauseIcon(), nil)
 	stop := widget.NewButtonWithIcon("", theme.MediaReplayIcon(), nil)
 
-	actions := fyne.NewContainerWithLayout(layout.NewHBoxLayout(),
+	actions := fyne.NewContainerWithLayout(NewSquareHBoxLayout(64),
 		home, load, run, pause, stop,
 	)
 
 	NewPos := func() *widget.Label {
-		l := widget.NewLabel("     0.0000")
+		l := widget.NewLabel("     0.000")
 		l.Alignment = fyne.TextAlignTrailing
 		l.TextStyle.Monospace = true
 		return l
@@ -108,7 +109,7 @@ func main() {
 	mPosY := NewPos()
 	mPosZ := NewPos()
 	refreshFns = append(refreshFns, func() {
-		set := func(l *widget.Label, v float64) { l.SetText(fmt.Sprintf("%11.4f", v)) }
+		set := func(l *widget.Label, v float64) { l.SetText(fmt.Sprintf("%10.3f", v)) }
 		wpos := st.WorkPosition()
 		mpos := st.MachinePosition()
 		set(wPosX, wpos.X)
@@ -119,10 +120,15 @@ func main() {
 		set(mPosZ, mpos.Z)
 	})
 
-	posRead := fyne.NewContainerWithLayout(layout.NewGridLayout(4),
-		widget.NewLabel("WPos"), wPosX, wPosY, wPosZ,
+	wpos := widget.NewLabel("WPos")
+	wpos.Alignment = fyne.TextAlignTrailing
+	mpos := widget.NewLabel("MPos")
+	mpos.Alignment = fyne.TextAlignTrailing
 
-		widget.NewLabel("MPos"), mPosX, mPosY, mPosZ,
+	posRead := fyne.NewContainerWithLayout(layout.NewGridLayout(4),
+		wpos, wPosX, wPosY, wPosZ,
+
+		mpos, mPosX, mPosY, mPosZ,
 
 		widget.NewLabel(""),
 		widget.NewButton("X=0", func() { grbl.SetWPos('X', 0) }),
@@ -130,10 +136,10 @@ func main() {
 		widget.NewButton("Z=0", func() { grbl.SetWPos('Z', 0) }),
 	)
 
-	centerLabel := func(text string) *widget.Label {
+	centerLabel := func(text string) fyne.CanvasObject {
 		label := widget.NewLabel(text)
 		label.Alignment = fyne.TextAlignCenter
-		return label
+		return widget.NewVBox(layout.NewSpacer(), label, layout.NewSpacer())
 	}
 
 	zUp := widget.NewButtonWithIcon("", theme.MoveUpIcon(), nil)
@@ -178,16 +184,16 @@ func main() {
 	zUp.OnTapped = makeMove('Z', false)
 	zDn.OnTapped = makeMove('Z', true)
 
-	touchPendant := fyne.NewContainerWithLayout(layout.NewGridLayout(5),
-		zUp, widget.NewLabel(""), widget.NewLabel(""), widget.NewButtonWithIcon("", theme.MoveUpIcon(), makeMove('Y', false)), widget.NewLabel(""),
-		centerLabel("Z"), widget.NewLabel(""), widget.NewButtonWithIcon("<", nil, makeMove('X', true)), centerLabel("XY"), widget.NewButtonWithIcon(">", nil, makeMove('X', false)),
-		zDn, widget.NewLabel(""), widget.NewLabel(""), widget.NewButtonWithIcon("", theme.MoveDownIcon(), makeMove('Y', true)), widget.NewLabel(""),
+	touchPendant := fyne.NewContainerWithLayout(NewSquareGridLayout(5, 64),
+		zUp, layout.NewSpacer(), layout.NewSpacer(), widget.NewButtonWithIcon("", theme.MoveUpIcon(), makeMove('Y', false)), layout.NewSpacer(),
+		centerLabel("Z"), layout.NewSpacer(), widget.NewButtonWithIcon("<", nil, makeMove('X', true)), centerLabel("XY"), widget.NewButtonWithIcon(">", nil, makeMove('X', false)),
+		zDn, layout.NewSpacer(), layout.NewSpacer(), widget.NewButtonWithIcon("", theme.MoveDownIcon(), makeMove('Y', true)), layout.NewSpacer(),
 	)
 
-	pos := widget.NewGroup("Position", fyne.NewContainerWithLayout(
+	pos := fyne.NewContainerWithLayout(
 		layout.NewHBoxLayout(),
-		sel, touchPendant, posRead,
-	))
+		sel, touchPendant, layout.NewSpacer(), posRead,
+	)
 
 	w.SetContent(fyne.NewContainerWithLayout(
 		layout.NewVBoxLayout(), actions, pos,
