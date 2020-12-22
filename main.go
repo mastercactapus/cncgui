@@ -74,14 +74,16 @@ func main() {
 	}()
 
 	home := widget.NewButtonWithIcon("", theme.HomeIcon(), func() {
-		dialog.ShowConfirm("Home Machine?", "This will cause the machine to move to it's home position and lose it's work coordinates.", func(proceed bool) {
+		go dialog.ShowConfirm("Home Machine?", "This will cause the machine to move to it's home position and lose it's work coordinates.", func(proceed bool) {
 			if proceed {
 				prog := dialog.NewProgressInfinite("Homing Machine", "The machine is now calibrating it's home position, please wait...", w)
-				err := grbl.CommandHome(true)
-				prog.Hide()
-				if err != nil {
-					dialog.ShowError(err, w)
-				}
+				go func() {
+					err := grbl.CommandHome(true)
+					prog.Hide()
+					if err != nil {
+						go dialog.ShowError(err, w)
+					}
+				}()
 			}
 		}, w)
 	})
@@ -91,8 +93,23 @@ func main() {
 	pause := widget.NewButtonWithIcon("", theme.MediaPauseIcon(), nil)
 	stop := widget.NewButtonWithIcon("", theme.MediaReplayIcon(), nil)
 
-	actions := fyne.NewContainerWithLayout(NewSquareHBoxLayout(64),
-		home, load, run, pause, stop,
+	status := widget.NewLabel("GRBL Status: ...")
+	pendStatus := widget.NewLabel("Pendant: Not Connected")
+
+	refreshFns = append(refreshFns, func() {
+		status.SetText("GRBL Status: " + st.StatusText())
+		pend := "Connected"
+		if !pendant.Connected() {
+			pend = "Not Connected"
+		}
+		pendStatus.SetText("Pendant: " + pend)
+	})
+
+	actions := fyne.NewContainerWithLayout(layout.NewHBoxLayout(),
+		fyne.NewContainerWithLayout(NewSquareHBoxLayout(64),
+			home, load, run, pause, stop,
+		),
+		fyne.NewContainerWithLayout(layout.NewVBoxLayout(), status, pendStatus),
 	)
 
 	NewPos := func() *widget.Label {

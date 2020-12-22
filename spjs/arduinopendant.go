@@ -3,10 +3,15 @@ package spjs
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 )
 
 type ArduinoPendant struct {
 	ctrl Controller
+
+	mx          sync.Mutex
+	lastMessage time.Time
 }
 
 var _ Driver = &ArduinoPendant{}
@@ -16,6 +21,9 @@ func NewArduinoPendant(ctrl Controller) *ArduinoPendant { return &ArduinoPendant
 
 // Name always returns `ArduinoPendant`.
 func (p *ArduinoPendant) Name() string { return "ArduinoPendant" }
+
+// Connected returns true if the serial port is available and open.
+func (p *ArduinoPendant) Connected() bool { return time.Since(p.lastMessage) < 2*time.Second }
 
 // BufferAlgorithm always returns `default` (no buffer).
 func (p *ArduinoPendant) BufferAlgorithm() string { return "default" }
@@ -28,6 +36,9 @@ func (p *ArduinoPendant) SetPort(*Port) {}
 
 // HandleData will process requests from the pendant and pass them to the controller.
 func (p *ArduinoPendant) HandleData(data string) error {
+	p.mx.Lock()
+	p.lastMessage = time.Now()
+	p.mx.Unlock()
 	if strings.TrimSpace(data) == "STOP" {
 		return p.ctrl.CommandEStop()
 	}
