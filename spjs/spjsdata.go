@@ -1,8 +1,10 @@
 package spjs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 )
@@ -62,16 +64,23 @@ func (c *Client) updatePorts(serialPorts []SerialPort) {
 	}
 }
 
-func (c *Client) readLoop() {
+func (c *Client) readLoop(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	for dataStr := range c.dataCh {
-		log.Println("READ:", dataStr)
-		if !strings.HasPrefix(dataStr, "{") {
+		if strings.Contains(dataStr, "SerialPorts") {
+			log.Println("READ:", "...serial port data omitted...")
+		} else {
+			log.Println("READ:", dataStr)
+		}
+		if !strings.HasPrefix(dataStr, "{") || !strings.HasSuffix(dataStr, "}") {
 			continue
 		}
 		var data SPJSData
 		err := json.Unmarshal([]byte(dataStr), &data)
 		if err != nil {
-			log.Printf("ERROR: parse SPJS payload (%s): %v", dataStr, err)
+			log.Fatalf("ERROR: parse SPJS payload (%s): %v", dataStr, err)
 			continue
 		}
 
@@ -85,40 +94,59 @@ func (c *Client) readLoop() {
 			if port == nil {
 				continue
 			}
-			err := port.drv.HandleData(data.D)
+			err := port.drv.HandleData(ctx, data.D)
 			if err != nil {
 				log.Printf(`ERROR: handle serial data "%s" (%s): %v`, data.D, port.drv.Name(), err)
 			}
 			continue
 		}
+
+		var baseID string
+		cmdID := commandID{Port: data.P}
+		if cmdID.Port == "" {
+			cmdID.Port = data.Port
+		}
+		idStr := strings.ReplaceAll(data.ID, "-", " ")
+		if idStr == "" {
+			continue
+		}
+		_, err = fmt.Sscanf(idStr, "%s %d", &baseID, &cmdID.ID)
+		if err != nil {
+			log.Printf(`ERROR: unknown ID format "%s"`, data.ID)
+			continue
+		}
+		if baseID != c.baseID {
+			continue
+		}
+
 		switch data.Cmd {
+		case "Write":
+			c.withOneCallback(cmdID, func(cb *commandCallback) bool {
+				cb.written()
+				return false
+			})
 		case "Complete":
-			cb := <-c.callbacks
-			ch := cb[data.ID]
-			delete(cb, data.ID)
-			c.callbacks <- cb
-			if ch != nil {
-				ch <- nil
-			}
+			c.withOneCallback(cmdID, func(cb *commandCallback) bool {
+				cb.finish(nil)
+
+				return false
+			})
 		case "Error":
-			cb := <-c.callbacks
-			ch := cb[data.ID]
-			delete(cb, data.ID)
-			c.callbacks <- cb
-			if ch != nil {
-				ch <- errors.New(data.ErrorCode)
-			}
+			c.withOneCallback(cmdID, func(cb *commandCallback) bool {
+				cb.finish(errors.New(data.ErrorCode))
+				return true
+			})
 		case "WipedQueue", "Close":
-			cb := <-c.callbacks
 			err := errors.New("RESET")
-			for id, ch := range cb {
-				if !strings.HasSuffix(id, ":"+data.Port) {
-					continue
+			c.withCallbacks(func(m callbackMap) {
+				for id, cb := range m {
+					if id.Port != data.P {
+						continue
+					}
+					cb.finish(err)
+					delete(m, id)
 				}
-				delete(cb, id)
-				ch <- err
-			}
-			c.callbacks <- cb
+			})
 		}
 	}
 }

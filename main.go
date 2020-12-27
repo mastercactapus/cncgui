@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"fyne.io/fyne/app"
 	"fyne.io/fyne/dialog"
 	"fyne.io/fyne/layout"
+	"fyne.io/fyne/storage"
 	"fyne.io/fyne/theme"
 	"fyne.io/fyne/widget"
 
@@ -30,23 +32,27 @@ func main() {
 	log.SetFlags(log.Lshortfile)
 
 	log.Println("START")
-	grbl := spjs.NewGRBL()
 	cli := spjs.NewClient(*spjsURL)
-	cli.RegisterDriver(spjs.NewVIDPIDMatcher("2a03", "0043"), grbl)
+	grbl := cli.NewPort(spjs.NewVIDPIDMatcher("2a03", "0043"), spjs.NewGRBL()).NewController()
 	pendant := spjs.NewArduinoPendant(grbl)
-	cli.RegisterDriver(spjs.NewVIDPIDMatcher("1a86", "7523"), pendant)
+	cli.NewPort(spjs.NewVIDPIDMatcher("1a86", "7523"), pendant)
 
 	a := app.New()
-
-	i := 0
-	i++
+	ctx := context.Background()
 
 	var st spjs.ControllerStatus
+	var jobSt spjs.JobStatus
 	var refreshFns []func()
 
 	go func() {
-		for newState := range grbl.Status() {
-			st = newState
+		for {
+			select {
+			case st = <-grbl.Status():
+			case jobSt = <-grbl.JobStatus():
+			}
+			if st == nil {
+				return
+			}
 			for _, fn := range refreshFns {
 				fn()
 			}
@@ -78,7 +84,7 @@ func main() {
 			if proceed {
 				prog := dialog.NewProgressInfinite("Homing Machine", "The machine is now calibrating it's home position, please wait...", w)
 				go func() {
-					err := grbl.CommandHome(true)
+					err := grbl.CommandHome(ctx, true)
 					prog.Hide()
 					if err != nil {
 						go dialog.ShowError(err, w)
@@ -87,11 +93,66 @@ func main() {
 			}
 		}, w)
 	})
-	load := widget.NewButtonWithIcon("", theme.FolderOpenIcon(), nil)
+	load := widget.NewButtonWithIcon("", theme.FolderOpenIcon(), func() {
+		lister, err := storage.ListerForURI(storage.NewURI("file:///home/nathan/cnc/cncgui"))
+		if err != nil {
+			log.Println("ERROR:", err)
+			return
+		}
 
-	run := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
-	pause := widget.NewButtonWithIcon("", theme.MediaPauseIcon(), nil)
-	stop := widget.NewButtonWithIcon("", theme.MediaReplayIcon(), nil)
+		open := dialog.NewFileOpen(func(rc fyne.URIReadCloser, err error) {
+			if err != nil {
+				log.Println("ERROR:", err)
+				return
+			}
+			if rc == nil {
+				return
+			}
+			err = grbl.SetJob(rc.Name(), rc)
+			if err != nil {
+				rc.Close()
+				dialog.ShowError(err, w)
+				return
+			}
+		}, w)
+
+		open.SetLocation(lister)
+		open.SetFilter(storage.NewExtensionFileFilter([]string{".nc"}))
+		open.Show()
+	})
+
+	runJob := widget.NewButtonWithIcon("", theme.ContentRedoIcon(), func() {
+		err := grbl.StartJob(ctx)
+		if err != nil {
+			dialog.ShowError(err, w)
+		}
+	})
+	runJob.Disable()
+	refreshFns = append(refreshFns, func() {
+		if jobSt.Valid && !jobSt.Active {
+			runJob.Enable()
+		} else {
+			runJob.Disable()
+		}
+	})
+	cycleStart := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), func() {
+		err := grbl.CommandCycleStart(ctx)
+		if err != nil {
+			dialog.ShowError(err, w)
+		}
+	})
+	feedHold := widget.NewButtonWithIcon("", theme.MediaPauseIcon(), func() {
+		err := grbl.CommandFeedHold(ctx)
+		if err != nil {
+			dialog.ShowError(err, w)
+		}
+	})
+	resetCancel := widget.NewButtonWithIcon("", theme.MediaReplayIcon(), func() {
+		err := grbl.CommandReset(ctx)
+		if err != nil {
+			dialog.ShowError(err, w)
+		}
+	})
 
 	status := widget.NewLabel("GRBL Status: ...")
 	pendStatus := widget.NewLabel("Pendant: Not Connected")
@@ -107,7 +168,7 @@ func main() {
 
 	actions := fyne.NewContainerWithLayout(layout.NewHBoxLayout(),
 		fyne.NewContainerWithLayout(NewSquareHBoxLayout(64),
-			home, load, run, pause, stop,
+			home, load, runJob, cycleStart, feedHold, resetCancel,
 		),
 		fyne.NewContainerWithLayout(layout.NewVBoxLayout(), status, pendStatus),
 	)
@@ -148,9 +209,9 @@ func main() {
 		mpos, mPosX, mPosY, mPosZ,
 
 		widget.NewLabel(""),
-		widget.NewButton("X=0", func() { grbl.SetWPos('X', 0) }),
-		widget.NewButton("Y=0", func() { grbl.SetWPos('Y', 0) }),
-		widget.NewButton("Z=0", func() { grbl.SetWPos('Z', 0) }),
+		widget.NewButton("X=0", func() { grbl.SetWPos(ctx, 'X', 0) }),
+		widget.NewButton("Y=0", func() { grbl.SetWPos(ctx, 'Y', 0) }),
+		widget.NewButton("Z=0", func() { grbl.SetWPos(ctx, 'Z', 0) }),
 	)
 
 	centerLabel := func(text string) fyne.CanvasObject {
@@ -192,7 +253,7 @@ func main() {
 			if invert {
 				val = -val
 			}
-			err = grbl.CommandJog(axis, val, false)
+			err = grbl.CommandJog(ctx, axis, val, false)
 			if err != nil {
 				dialog.ShowError(err, w)
 			}
@@ -212,8 +273,50 @@ func main() {
 		sel, touchPendant, layout.NewSpacer(), posRead,
 	)
 
+	jobStatus := widget.NewLabel("No active job.")
+	jobProgress := widget.NewProgressBar()
+	jobProgress.TextFormatter = func() string {
+		if !jobSt.Active {
+			return "No job active."
+		}
+		var pct float64
+		if jobSt.Read > 0 {
+			pct = float64(jobSt.Completed) / float64(jobSt.Read)
+		}
+		if jobSt.ReadComplete {
+			return fmt.Sprintf("%.f%% (%d of %d)", pct*100, jobSt.Completed, jobSt.Read)
+		}
+
+		return fmt.Sprintf("%.f%% (%d of %d+)", pct*100, jobSt.Completed, jobSt.Read)
+	}
+	refreshFns = append(refreshFns, func() {
+		if !jobSt.Valid {
+			jobStatus.SetText("No active job.")
+			jobProgress.SetValue(0)
+			return
+		}
+
+		msg := fmt.Sprintf("Job: %s", jobSt.Name)
+		if jobSt.Err != nil {
+			msg += " (error: " + jobSt.Err.Error() + ")"
+		} else if !jobSt.Active {
+			msg += " (paused)"
+		}
+		jobStatus.SetText(msg)
+
+		if jobSt.Read > 0 {
+			jobProgress.SetValue(float64(jobSt.Completed) / float64(jobSt.Read))
+		}
+	})
+
+	grp := widget.NewGroup("Job",
+		fyne.NewContainerWithLayout(layout.NewHBoxLayout(), jobStatus),
+		jobProgress,
+	)
 	w.SetContent(fyne.NewContainerWithLayout(
 		layout.NewVBoxLayout(), actions, pos,
+		layout.NewSpacer(),
+		grp,
 	))
 
 	fmt.Println("Launch")

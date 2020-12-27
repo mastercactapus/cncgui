@@ -1,6 +1,9 @@
 package spjs
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +15,8 @@ import (
 )
 
 type Client struct {
+	baseID string
+
 	id uint32
 
 	url string
@@ -23,7 +28,32 @@ type Client struct {
 	serialPorts chan []SerialPort
 	dataCh      chan string
 
-	callbacks chan map[string]chan error
+	callbacks chan callbackMap
+}
+type callbackMap map[commandID]*commandCallback
+
+type commandID struct {
+	Port string
+	ID   uint32
+}
+type commandCallback struct {
+	Err     error
+	WriteCh chan struct{}
+	DoneCh  chan struct{}
+}
+
+func (cb *commandCallback) written() {
+	if cb == nil {
+		return
+	}
+	close(cb.WriteCh)
+}
+func (cb *commandCallback) finish(err error) {
+	if cb == nil {
+		return
+	}
+	cb.Err = err
+	close(cb.DoneCh)
 }
 
 type SerialPortMatcher func(SerialPort) bool
@@ -47,17 +77,24 @@ type SPJSCmdData struct {
 }
 
 func NewClient(url string) *Client {
+	buf := make([]byte, 8)
+	_, err := io.ReadFull(rand.Reader, buf)
+	if err != nil {
+		panic(err)
+	}
+
 	cli := &Client{
+		baseID:      base64.StdEncoding.EncodeToString(buf),
 		url:         url,
 		serialPorts: make(chan []SerialPort, 1),
-		callbacks:   make(chan map[string]chan error, 1),
+		callbacks:   make(chan callbackMap, 1),
 		dataCh:      make(chan string),
 		ports:       make(chan []*Port, 1),
 	}
 
 	cli.serialPorts <- nil
 	cli.ports <- nil
-	cli.callbacks <- make(map[string]chan error)
+	cli.callbacks <- make(callbackMap)
 
 	// update port list
 	go func() {
@@ -67,17 +104,33 @@ func NewClient(url string) *Client {
 	}()
 
 	// process messages
-	go cli.readLoop()
+	go cli.readLoop(context.TODO())
 
 	return cli
 }
 
-func (c *Client) RegisterDriver(match SerialPortMatcher, drv Driver) {
+func (c *Client) NewPort(match SerialPortMatcher, drv Driver) *Port {
 	p := &Port{match: match, cli: c, drv: drv}
-	drv.SetPort(p)
 	c.ports <- append(<-c.ports, p)
 	io.WriteString(c, "list")
 	log.Println("Registered new driver", drv.Name())
+	return p
+}
+func (c *Client) withOneCallback(id commandID, handle func(*commandCallback) bool) {
+	c.withCallbacks(func(m callbackMap) {
+		cb := m[id]
+		if cb == nil {
+			return
+		}
+		if handle(cb) {
+			delete(m, id)
+		}
+	})
+}
+func (c *Client) withCallbacks(update func(callbackMap)) {
+	cbMap := <-c.callbacks
+	update(cbMap)
+	c.callbacks <- cbMap
 }
 
 func (c *Client) reconnect() error {
@@ -87,13 +140,14 @@ func (c *Client) reconnect() error {
 		c.serialPorts <- nil
 		c.ws.Close()
 		c.ws = nil
-		cb := <-c.callbacks
+
 		err := errors.New("NETWORK ERROR")
-		for id, ch := range cb {
-			ch <- err
-			delete(cb, id)
-		}
-		c.callbacks <- cb
+		c.withCallbacks(func(m callbackMap) {
+			for id, cb := range m {
+				cb.finish(err)
+				delete(m, id)
+			}
+		})
 	}
 	if c.ws != nil {
 		cleanup()

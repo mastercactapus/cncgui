@@ -1,6 +1,7 @@
 package spjs
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -8,7 +9,7 @@ import (
 )
 
 type ArduinoPendant struct {
-	ctrl Controller
+	ctrl *Controller
 
 	mx          sync.Mutex
 	lastMessage time.Time
@@ -17,7 +18,7 @@ type ArduinoPendant struct {
 var _ Driver = &ArduinoPendant{}
 
 // NewArduinoPendant will create a new pendant driver that will relay commands to the provided controller.
-func NewArduinoPendant(ctrl Controller) *ArduinoPendant { return &ArduinoPendant{ctrl: ctrl} }
+func NewArduinoPendant(ctrl *Controller) *ArduinoPendant { return &ArduinoPendant{ctrl: ctrl} }
 
 // Name always returns `ArduinoPendant`.
 func (p *ArduinoPendant) Name() string { return "ArduinoPendant" }
@@ -35,12 +36,12 @@ func (p *ArduinoPendant) BaudRate() int { return 115200 }
 func (p *ArduinoPendant) SetPort(*Port) {}
 
 // HandleData will process requests from the pendant and pass them to the controller.
-func (p *ArduinoPendant) HandleData(data string) error {
+func (p *ArduinoPendant) HandleData(ctx context.Context, data string) error {
 	p.mx.Lock()
 	p.lastMessage = time.Now()
 	p.mx.Unlock()
 	if strings.TrimSpace(data) == "STOP" {
-		return p.ctrl.CommandEStop()
+		return p.ctrl.CommandEStop(ctx)
 	}
 
 	if !strings.HasPrefix(data, "STEP") {
@@ -68,5 +69,5 @@ func (p *ArduinoPendant) HandleData(data string) error {
 		return nil
 	}
 
-	return p.ctrl.CommandJog(axis, float64(step)*float64(mult)/100, false)
+	return p.ctrl.CommandJog(ctx, axis, float64(step)*float64(mult)/100, false)
 }

@@ -1,6 +1,7 @@
 package spjs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,18 +15,27 @@ type Port struct {
 	drv   Driver
 }
 
-func (p *Port) SendCommand(command string, wait bool) error {
-	ch, err := p.sendCommand(command)
+// Connected returns true if the serial port is available and open.
+func (p *Port) Connected() bool {
+	_, isOpen := p.Name()
+	return isOpen
+}
+
+func (p *Port) SendCommand(ctx context.Context, command string, wait bool) error {
+	cb, err := p.sendCommand(command)
 	if err != nil {
 		return err
 	}
 	if !wait {
 		return nil
 	}
-	return <-ch
+	<-cb.DoneCh
+	return cb.Err
 }
 
-func (p *Port) sendCommand(command string) (done <-chan error, err error) {
+func (id commandID) Format(baseID string) string { return fmt.Sprintf("%s-%d", baseID, id.ID) }
+
+func (p *Port) sendCommand(command string) (*commandCallback, error) {
 	portName, isOpen := p.Name()
 	if portName == "" {
 		return nil, errors.New("port not available")
@@ -38,11 +48,11 @@ func (p *Port) sendCommand(command string) (done <-chan error, err error) {
 		}
 	}
 
-	id := fmt.Sprintf("%d:%s", atomic.AddUint32(&p.cli.id, 1), portName)
+	id := commandID{Port: portName, ID: atomic.AddUint32(&p.cli.id, 1)}
 	data, err := json.Marshal(SendJSON{
 		Port: portName,
 		Data: []SendJSONData{{
-			ID:   id,
+			ID:   id.Format(p.cli.baseID),
 			Data: command,
 		}},
 	})
@@ -50,17 +60,19 @@ func (p *Port) sendCommand(command string) (done <-chan error, err error) {
 		return nil, fmt.Errorf("marshal JSON: %w", err)
 	}
 
-	cb := <-p.cli.callbacks
-	ch := make(chan error, 1)
-	cb[id] = ch
-	p.cli.callbacks <- cb
+	cb := &commandCallback{
+		DoneCh: make(chan struct{}), WriteCh: make(chan struct{}),
+	}
+	p.cli.withCallbacks(func(m callbackMap) {
+		m[id] = cb
+	})
 
 	_, err = io.WriteString(p.cli, "sendjson "+string(data))
 	if err != nil {
 		return nil, fmt.Errorf("write to SPJS: %w", err)
 	}
 
-	return ch, nil
+	return cb, nil
 }
 
 func (p *Port) open(name string) error {
