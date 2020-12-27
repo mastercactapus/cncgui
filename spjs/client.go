@@ -110,7 +110,8 @@ func NewClient(url string) *Client {
 }
 
 func (c *Client) NewPort(match SerialPortMatcher, drv Driver) *Port {
-	p := &Port{match: match, cli: c, drv: drv}
+	p := &Port{match: match, cli: c, drv: drv, sendCh: make(chan *sendReq, 1000)}
+	go p.sendLoop()
 	c.ports <- append(<-c.ports, p)
 	io.WriteString(c, "list")
 	log.Println("Registered new driver", drv.Name())

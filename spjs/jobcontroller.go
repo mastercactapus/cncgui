@@ -11,11 +11,11 @@ import (
 
 const (
 
-	// spjsJobChunkLines is the number of commands to send of a job to SPJS at a time.
-	spjsJobChunkLines = 100
+	// spjsJobLines is the min number of commands to keep in the SPJS queue at a time.
+	spjsJobLines = 300
 
-	// spjsJobChunks is the number of chunks to send of a job to SPJS at a time.
-	spjsJobChunks = 3
+	// spjsJobLineBatch is the number of commands to send of a job to SPJS at a time.
+	spjsJobLineBatch = 100
 
 	// spjsLoadJobChunks is the max number of lines of a job to load at a time.
 	spjsJobLinesBuffer = 100000
@@ -75,7 +75,6 @@ func (jc *jobController) readLoop(scan *bufio.Scanner, c io.Closer) {
 		defer c.Close()
 	}
 
-	lines := make([]string, 0, spjsJobChunkLines)
 	for scan.Scan() {
 		text := strings.TrimSpace(scan.Text())
 		if strings.HasPrefix(text, ";") || text == "" {
@@ -83,20 +82,8 @@ func (jc *jobController) readLoop(scan *bufio.Scanner, c io.Closer) {
 		}
 
 		jc.updateStatus(func(s *JobStatus) { s.Read++ })
-		lines = append(lines, text)
-		if len(lines) == spjsJobChunkLines {
-			select {
-			case jc.lines <- jc.wrapGCode(lines):
-			case <-jc.ctx.Done():
-				return
-			}
-			lines = lines[:0]
-		}
-	}
-
-	if len(lines) > 0 {
 		select {
-		case jc.lines <- jc.wrapGCode(lines):
+		case jc.lines <- scan.Text():
 		case <-jc.ctx.Done():
 			return
 		}
@@ -123,12 +110,13 @@ func (jc *jobController) Start() error {
 	}
 	jc.wg.Add(2)
 
-	ch := make(chan *commandCallback, spjsJobChunks)
+	ch := make(chan *commandCallback, spjsJobLines)
 
 	// send commands
 	go func() {
 		defer jc.wg.Done()
 		defer close(ch)
+		defer jc.flush()
 
 		var line string
 		var ok bool
@@ -143,7 +131,7 @@ func (jc *jobController) Start() error {
 				return
 			}
 
-			cb, err := jc.sendCommand(jc.wrapGCode([]string{line}))
+			cb, err := jc.sendCommand(jc.wrapGCode([]string{line}), spjsJobLineBatch)
 			if err != nil {
 				jc.failWith(err)
 				// abort on failure
