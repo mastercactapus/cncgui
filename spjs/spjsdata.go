@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 )
@@ -120,6 +121,8 @@ func (c *Client) readLoop(ctx context.Context) {
 		}
 
 		switch data.Cmd {
+		case "Open":
+			io.WriteString(c, "list")
 		case "Write":
 			c.withOneCallback(cmdID, func(cb *commandCallback) bool {
 				cb.written()

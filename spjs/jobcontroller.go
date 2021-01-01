@@ -12,10 +12,10 @@ import (
 const (
 
 	// spjsJobLines is the min number of commands to keep in the SPJS queue at a time.
-	spjsJobLines = 300
+	spjsJobLines = 100
 
 	// spjsJobLineBatch is the number of commands to send of a job to SPJS at a time.
-	spjsJobLineBatch = 100
+	spjsJobLineBatch = 45
 
 	// spjsLoadJobChunks is the max number of lines of a job to load at a time.
 	spjsJobLinesBuffer = 100000
