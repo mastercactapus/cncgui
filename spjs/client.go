@@ -40,6 +40,7 @@ type commandCallback struct {
 	Err     error
 	WriteCh chan struct{}
 	DoneCh  chan struct{}
+	once    sync.Once
 }
 
 func (cb *commandCallback) written() {
@@ -53,7 +54,12 @@ func (cb *commandCallback) finish(err error) {
 		return
 	}
 	cb.Err = err
-	close(cb.DoneCh)
+	cb.once.Do(func() {
+		if cb.Err == nil {
+			cb.Err = err
+		}
+		close(cb.DoneCh)
+	})
 }
 
 type SerialPortMatcher func(SerialPort) bool
@@ -100,6 +106,12 @@ func NewClient(url string) *Client {
 	go func() {
 		for range time.NewTicker(10 * time.Second).C {
 			io.WriteString(cli, "list")
+		}
+	}()
+
+	go func() {
+		for range time.NewTicker(time.Second).C {
+			cli.Check()
 		}
 	}()
 
@@ -190,6 +202,21 @@ func (c *Client) reconnect() error {
 	return nil
 }
 
+func (c *Client) Check() error {
+	c.mx.Lock()
+	defer c.mx.Unlock()
+
+	var err error
+	if c.ws == nil {
+		err = c.reconnect()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Write will write to the active ws stream, reconnecting on error.
 func (c *Client) Write(p []byte) (int, error) {
 	c.mx.Lock()
@@ -197,7 +224,7 @@ func (c *Client) Write(p []byte) (int, error) {
 
 	var err error
 	if c.ws == nil {
-		err := c.reconnect()
+		err = c.reconnect()
 		if err != nil {
 			return 0, err
 		}

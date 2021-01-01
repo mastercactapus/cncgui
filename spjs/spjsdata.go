@@ -107,6 +107,9 @@ func (c *Client) readLoop(ctx context.Context) {
 		if cmdID.Port == "" {
 			cmdID.Port = data.Port
 		}
+		if data.Cmd == "Open" {
+			io.WriteString(c, "list")
+		}
 		idStr := strings.ReplaceAll(data.ID, "-", " ")
 		if idStr == "" {
 			continue
@@ -121,8 +124,6 @@ func (c *Client) readLoop(ctx context.Context) {
 		}
 
 		switch data.Cmd {
-		case "Open":
-			io.WriteString(c, "list")
 		case "Write":
 			c.withOneCallback(cmdID, func(cb *commandCallback) bool {
 				cb.written()
