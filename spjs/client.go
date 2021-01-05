@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 )
 
 type Client struct {
@@ -167,12 +167,13 @@ func (c *Client) reconnect() error {
 	}
 
 	var err error
-	ws, err := websocket.Dial(c.url, "ws", "http://localhost")
+
+	ws, _, err := websocket.DefaultDialer.Dial(c.url, nil)
 	if err != nil {
 		return fmt.Errorf("dial SPJS: %w", err)
 	}
 
-	_, err = io.WriteString(ws, "list")
+	err = ws.WriteMessage(websocket.TextMessage, []byte("list"))
 	if err != nil {
 		ws.Close()
 		return fmt.Errorf("write SPJS (list): %w", err)
@@ -181,15 +182,14 @@ func (c *Client) reconnect() error {
 	c.ws = ws
 
 	go func() {
-		buf := make([]byte, 65536)
 		for {
-			n, err := ws.Read(buf)
+			_, data, err := ws.ReadMessage()
 			if err != nil {
 				log.Printf("ERROR: read SPJS: %v", err)
 				break
 			}
 
-			c.dataCh <- string(buf[:n])
+			c.dataCh <- string(data)
 		}
 
 		c.mx.Lock()
@@ -230,8 +230,8 @@ func (c *Client) Write(p []byte) (int, error) {
 		}
 	}
 
-	log.Println("WRITE:", string(p))
-	n, err := c.ws.Write(p)
+	// log.Println("WRITE:", string(p))
+	err = c.ws.WriteMessage(websocket.TextMessage, p)
 	if err != nil {
 		log.Println("ERROR: write SPJS (will reconnect): %w", err)
 		err = c.reconnect()
@@ -241,5 +241,5 @@ func (c *Client) Write(p []byte) (int, error) {
 		return c.Write(p)
 	}
 
-	return n, nil
+	return len(p), nil
 }

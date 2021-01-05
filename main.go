@@ -65,8 +65,10 @@ func main() {
 	if *full {
 		w.SetFullScreen(true)
 	}
-
+	readyCh := make(chan struct{})
 	go func() {
+		<-readyCh
+
 		var grblWait *dialog.ProgressInfiniteDialog
 		t := time.NewTicker(100 * time.Millisecond)
 		for range t.C {
@@ -320,5 +322,7 @@ func main() {
 	))
 
 	fmt.Println("Launch")
-	w.ShowAndRun()
+	w.Show()
+	close(readyCh)
+	a.Run()
 }

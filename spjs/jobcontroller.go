@@ -12,10 +12,7 @@ import (
 const (
 
 	// spjsJobLines is the min number of commands to keep in the SPJS queue at a time.
-	spjsJobLines = 100
-
-	// spjsJobLineBatch is the number of commands to send of a job to SPJS at a time.
-	spjsJobLineBatch = 45
+	spjsJobLines = 500
 
 	// spjsLoadJobChunks is the max number of lines of a job to load at a time.
 	spjsJobLinesBuffer = 100000
@@ -116,7 +113,6 @@ func (jc *jobController) Start() error {
 	go func() {
 		defer jc.wg.Done()
 		defer close(ch)
-		defer jc.flush()
 
 		var line string
 		var ok bool
@@ -131,7 +127,7 @@ func (jc *jobController) Start() error {
 				return
 			}
 
-			cb, err := jc.sendCommand(jc.wrapGCode([]string{line}), spjsJobLineBatch)
+			cb, err := jc.sendCommand(jc.wrapGCode([]string{line}))
 			if err != nil {
 				jc.failWith(err)
 				// abort on failure
@@ -150,24 +146,24 @@ func (jc *jobController) Start() error {
 	go func() {
 		defer jc.wg.Done()
 
-		var cb *commandCallback
-		var ok bool
 		for {
+			var callback *commandCallback
 			select {
-			case cb, ok = <-ch:
+			case cb, ok := <-ch:
+				if !ok {
+					return
+				}
+				callback = cb
 			case <-jc.ctx.Done():
-				return
-			}
-			if !ok {
 				return
 			}
 
 			select {
-			case <-cb.WriteCh:
+			case <-callback.WriteCh:
 				jc.updateStatus(func(s *JobStatus) { s.Sent++ })
-			case <-cb.DoneCh:
-				if cb.Err != nil {
-					jc.failWith(cb.Err)
+			case <-callback.DoneCh:
+				if callback.Err != nil {
+					jc.failWith(callback.Err)
 					return
 				}
 				jc.updateStatus(func(s *JobStatus) {
@@ -180,9 +176,9 @@ func (jc *jobController) Start() error {
 			}
 
 			select {
-			case <-cb.DoneCh:
-				if cb.Err != nil {
-					jc.failWith(cb.Err)
+			case <-callback.DoneCh:
+				if callback.Err != nil {
+					jc.failWith(callback.Err)
 					return
 				}
 				jc.updateStatus(func(s *JobStatus) {
